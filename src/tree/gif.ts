@@ -1,71 +1,24 @@
-import { HEIGHT, LOOP, WIDTH, allThemes, type Scene } from "./scene.ts";
-import { CODE_ROWS, editorState, tokenize, type CodeLine } from "./code.ts";
+import { HEIGHT, LOOP, PALETTE, WIDTH, type Scene } from "./scene.ts";
 
-const editorRowHeight = 19;
-const editorHeight = 18 + CODE_ROWS * editorRowHeight;
-const tokenColors: Record<string, string> = { "code-string": "#ebc081", "code-keyword": "#d4afea", "code-name": "#a2d8f6" };
+// Matches the body background in index.css for each lights state.
+const BACKGROUND = { on: "#0d1627", off: "#0b3a30" };
 
-function drawEditor(context: CanvasRenderingContext2D, top: number, time: number, timeline: CodeLine[]) {
-  const width = context.canvas.width;
-  const { index, first, typed, cursor } = editorState(timeline, time, false);
-  context.save();
-  context.translate(0, top);
-  context.fillStyle = "#0d1d26";
-  context.fillRect(0, 0, width, editorHeight);
-  context.fillStyle = "#1b343b";
-  context.fillRect(0, 0, width, 2);
-  context.fillStyle = "#5aa487";
-  context.fillRect(0, 0, width * time / LOOP, 2);
-  context.font = "12px Menlo, Consolas, monospace";
-  context.textBaseline = "middle";
-  for (let lineIndex = first; lineIndex <= index; lineIndex++) {
-    const row = timeline[lineIndex];
-    const active = lineIndex === index;
-    const y = 9 + (lineIndex - first) * editorRowHeight;
-    const middle = y + editorRowHeight / 2;
-    if (active) {
-      context.fillStyle = "#172f39";
-      context.fillRect(0, y, width, editorRowHeight);
-      context.fillStyle = "#83e7b4";
-      context.fillRect(0, y, 2, editorRowHeight);
-    }
-    context.fillStyle = "#789599";
-    context.textAlign = "right";
-    context.fillText(String(lineIndex + 1), 31, middle);
-    context.textAlign = "left";
-    let x = 44;
-    for (const token of tokenize(row, active ? typed : row.letters.length)) {
-      context.fillStyle = (token.kind && tokenColors[token.kind]) || "#b8d1d5";
-      context.fillText(token.text, x, middle);
-      x += context.measureText(token.text).width;
-    }
-    if (active && cursor) {
-      context.fillStyle = "#9becc1";
-      context.fillRect(Math.min(x + 1, width - 3), middle - 6, 2, 12);
-    }
-  }
-  context.restore();
-}
+const rgb = (hex: string) => {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return [value >> 16, (value >> 8) & 255, value & 255];
+};
 
-// Fixed palette: dark background ramps plus a ramp toward every theme accent.
-function makePalette() {
-  const colors: number[][] = [];
-  function ramp(from: number[], to: number[], steps: number) {
+// Fixed palette: the background, a ramp to white for snow, and a ramp toward every scene colour.
+function makePalette(background: string) {
+  const base = rgb(background);
+  const colors: number[][] = [base];
+  function ramp(to: number[], steps: number) {
     for (let step = 1; step <= steps; step += 1) {
-      colors.push(from.map((channel, index) => Math.round(channel + (to[index] - channel) * step / steps)));
+      colors.push(base.map((channel, index) => Math.round(channel + (to[index] - channel) * step / steps)));
     }
   }
-  const dark = [9, 23, 29];
-  ramp([3, 10, 15], [24, 48, 51], 30);
-  ramp([7, 17, 26], [44, 85, 79], 15);
-  const accents = allThemes.flatMap(theme =>
-    [theme.foliage[0], theme.foliage[2], theme.foliage[4], theme.ornaments[0], theme.garland]
-  );
-  accents.push("#e3f9e9", "#e1aa73", "#b4cfda", "#fff1cb");
-  for (const hex of accents) {
-    const value = Number.parseInt(hex.slice(1), 16);
-    ramp(dark, [value >> 16, (value >> 8) & 255, value & 255], 8);
-  }
+  ramp([255, 255, 255], 24);
+  for (const color of PALETTE) ramp(rgb(color), 12);
   return colors;
 }
 
@@ -167,19 +120,19 @@ function newGif(width: number, height: number, palette: number[][], delay: numbe
   };
 }
 
-// Renders one full loop (scene + editor strip) into an animated GIF. Returns null if cancelled.
+// Renders one full loop of the scene into an animated GIF. Returns null if cancelled.
 export async function recordGif(
   scene: Scene,
-  timeline: CodeLine[],
+  lightsOn: boolean,
   onProgress: (percent: number) => void,
   cancelled: () => boolean
 ) {
   const frame = document.createElement("canvas");
   frame.width = 480;
-  const sceneHeight = Math.round(HEIGHT * frame.width / WIDTH);
-  frame.height = sceneHeight + editorHeight;
+  frame.height = Math.round(HEIGHT * frame.width / WIDTH);
   const capture = frame.getContext("2d", { willReadFrequently: true })!;
-  const palette = makePalette();
+  const background = lightsOn ? BACKGROUND.on : BACKGROUND.off;
+  const palette = makePalette(background);
   const indexPixels = colorIndexer(palette);
   const pixels = new Uint8Array(frame.width * frame.height);
   const step = 80;
@@ -190,9 +143,10 @@ export async function recordGif(
       await new Promise(resolve => setTimeout(resolve, 0));
       if (cancelled()) return null;
     }
-    scene.render(time);
-    capture.drawImage(scene.canvas, 0, 0, frame.width, sceneHeight);
-    drawEditor(capture, sceneHeight, time, timeline);
+    scene.render(time, lightsOn ? 1 : 0);
+    capture.fillStyle = background;
+    capture.fillRect(0, 0, frame.width, frame.height);
+    capture.drawImage(scene.canvas, 0, 0, frame.width, frame.height);
     indexPixels(capture.getImageData(0, 0, frame.width, frame.height).data, pixels);
     gif.addFrame(pixels);
   }

@@ -1,7 +1,6 @@
-import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { flushSync } from "react-dom";
-import { GROW_END, LIMIT, LOOP, SAMPLE, createScene, splitText, type Scene, type Tree } from "./tree/scene.ts";
-import { CODE_ROWS, editorState, makeCode, tokenize } from "./tree/code.ts";
+import { LIMIT, LOOP, SAMPLE, createScene, splitText, type Scene, type Tree } from "./tree/scene.ts";
 import { linkFor, normalizeMessage, readLinkedTree } from "./tree/link.ts";
 import { recordGif } from "./tree/gif.ts";
 
@@ -9,16 +8,50 @@ const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const compactView = matchMedia("(max-width: 799px)");
 const SAMPLE_TREE: Tree = { message: SAMPLE };
 
+// String lights across the top: a wire that sags SAGS times, with bulbs hanging from it.
+const SAGS = 6;
+const BULBS = 24;
+const wireY = (t: number) => 6 + 14 * Math.sin(Math.PI * ((t * SAGS) % 1));
+const wirePath = Array.from({ length: SAGS * 16 + 1 }, (_, index) => {
+  const t = index / (SAGS * 16);
+  return (index ? "L" : "M") + (t * 1000).toFixed(1) + " " + wireY(t).toFixed(1);
+}).join(" ");
+
+function StringLights() {
+  return (
+    <div className="string-lights" aria-hidden="true">
+      <svg viewBox="0 0 1000 44" preserveAspectRatio="none"><path d={wirePath} /></svg>
+      {Array.from({ length: BULBS }, (_, index) => {
+        const t = (index + .5) / BULBS;
+        const style = { left: t * 100 + "%", top: wireY(t) + 2 + "px", "--i": index } as CSSProperties;
+        return <span key={index} className="bulb" style={style} />;
+      })}
+    </div>
+  );
+}
+
+function SantaHat() {
+  return (
+    <svg className="santa-hat" viewBox="0 0 72 58" aria-hidden="true">
+      <path d="M12 46 C 13 27 22 10 38 8 C 51 7 61 15 65 28 C 66 33 66 38 63 42 C 59 34 53 28 46 29 C 49 35 51 41 52 46 Z" fill="#f23a4d" />
+      <path d="M46 29 C 53 28 59 34 63 42 C 58 38 53 35 48 36 Z" fill="#a8172a" />
+      <path d="M22 44 C 22 30 28 17 38 12 C 31 20 28 32 29 44 Z" fill="#ff6b78" />
+      <circle cx="63" cy="44" r="7.5" fill="#fff" />
+      <rect x="5" y="41" width="54" height="15" rx="7.5" fill="#fff" />
+      <rect x="5" y="50" width="54" height="6" rx="3" fill="#e4e8ea" />
+    </svg>
+  );
+}
+
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<Scene>(null);
   const fieldRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
-  const terminalRef = useRef<HTMLElement>(null);
-  const codeRef = useRef<HTMLPreElement>(null);
-  const progressRef = useRef<HTMLSpanElement>(null);
+  const stageRef = useRef<HTMLElement>(null);
   const shareLinkRef = useRef<HTMLInputElement>(null);
   const elapsed = useRef(0);
+  const lit = useRef(0);
   const composing = useRef(false);
   // Bumped whenever the shown tree changes; a running GIF export stops when it sees a new value.
   const generation = useRef(0);
@@ -27,6 +60,7 @@ export default function App() {
   const [giftTree, setGiftTree] = useState(() => readLinkedTree(location.href));
   const [createdTree, setCreatedTree] = useState<Tree | null>(null);
   const [paused, setPaused] = useState(reducedMotion.matches);
+  const [lightsOn, setLightsOn] = useState(false);
   const [count, setCount] = useState(0);
   const [error, setError] = useState("");
   const [announcement, setAnnouncement] = useState("");
@@ -34,12 +68,9 @@ export default function App() {
   const [shareLink, setShareLink] = useState("");
   const [gifUrl, setGifUrl] = useState("");
   const [exporting, setExporting] = useState(false);
-  const [status, setStatus] = useState("MESSAGE");
 
   const giftView = giftTree !== null;
   const tree = giftTree ?? createdTree ?? SAMPLE_TREE;
-  const timeline = useMemo(() => makeCode(tree.message), [tree.message]);
-  const [editor, setEditor] = useState(() => editorState(timeline, 0, paused));
 
   useEffect(() => {
     sceneRef.current ??= createScene(canvasRef.current!);
@@ -48,15 +79,13 @@ export default function App() {
 
   useEffect(() => {
     const scene = sceneRef.current!;
+    const target = lightsOn ? 1 : 0;
+    if (paused || exporting) lit.current = target;
     let frame = 0;
     let last: number | null = null;
     const draw = () => {
-      const mix = scene.render(elapsed.current);
-      if (giftView) return;
-      const next = editorState(timeline, elapsed.current, paused);
-      setEditor(prev => prev.index === next.index && prev.typed === next.typed && prev.cursor === next.cursor ? prev : next);
-      setStatus(paused ? "PAUSED" : mix === 0 ? "MESSAGE" : mix === 1 ? "RENDER OK" : elapsed.current < GROW_END ? "GROWING" : "LOOPING");
-      progressRef.current!.style.transform = "scaleX(" + (elapsed.current / LOOP).toFixed(4) + ")";
+      lit.current += (target - lit.current) * .12; // lights fade in/out over ~0.4s
+      scene.render(elapsed.current, lit.current);
     };
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
@@ -76,22 +105,12 @@ export default function App() {
       cancelAnimationFrame(frame);
       window.removeEventListener("resize", resize);
     };
-  }, [tree, timeline, paused, exporting, giftView]);
-
-  const lastFirst = useRef(editor.first);
-  useEffect(() => {
-    if (editor.first > lastFirst.current && !paused && !reducedMotion.matches) {
-      codeRef.current?.animate(
-        [{ transform: "translateY(.65em)" }, { transform: "translateY(0)" }],
-        { duration: 120, easing: "ease-out" }
-      );
-    }
-    lastFirst.current = editor.first;
-  }, [editor.first, paused]);
+  }, [tree, paused, exporting, lightsOn]);
 
   useLayoutEffect(() => {
     document.body.dataset.view = giftView ? "gift" : "builder";
-  }, [giftView]);
+    document.body.dataset.lights = lightsOn ? "on" : "off";
+  }, [giftView, lightsOn]);
 
   useEffect(() => {
     const onChange = (event: MediaQueryListEvent) => {
@@ -131,7 +150,8 @@ export default function App() {
   }
 
   // Switches between the builder and the gift (receiver) view. Coming back from a link resets the builder;
-  // coming back from "받는 화면 미리 보기" restores where playback was.
+  // coming back from "받는 화면 미리 보기" restores where playback was. A received tree starts with the lights off
+  // so the receiver gets to switch them on.
   function openView(received: Tree | null) {
     const returningHome = giftView && !received;
     const previous = returningHome ? previewPlayback.current : null;
@@ -146,6 +166,7 @@ export default function App() {
           setAnnouncement("");
         }
       }
+      if (received) setLightsOn(false);
       generation.current += 1;
       elapsed.current = previous?.elapsed ?? 0;
       setGiftTree(received);
@@ -175,12 +196,9 @@ export default function App() {
     setGifUrl("");
     resetShareFeedback();
     setAnnouncement("‘" + value + "’ 트리를 만들었어요." + (nextPaused ? " 재생 버튼을 눌러 움직임을 볼 수 있어요." : ""));
-    const terminal = terminalRef.current!;
-    const bounds = terminal.getBoundingClientRect();
     if (compactView.matches) fieldRef.current!.blur();
-    if (bounds.top > innerHeight * .53 && bounds.bottom > innerHeight) {
-      terminal.scrollIntoView({ block: compactView.matches ? "start" : "nearest", behavior: "auto" });
-    }
+    const bounds = stageRef.current!.getBoundingClientRect();
+    if (bounds.top < 0 || bounds.bottom > innerHeight) stageRef.current!.scrollIntoView({ block: "nearest" });
   }
 
   async function copyLink() {
@@ -219,7 +237,7 @@ export default function App() {
     try {
       const blob = await recordGif(
         sceneRef.current!,
-        timeline,
+        lightsOn,
         percent => setFeedback("GIF 만드는 중 " + percent + "%"),
         () => generation.current !== run
       );
@@ -237,15 +255,44 @@ export default function App() {
   const canvasLabel = tree.message + " 문구가 크리스마스 트리로 바뀌는 모습";
 
   return (
-    <div className="shell">
-      <header className="brand">
-        <span className="brand-mark" aria-hidden="true" />
-        <span>ASCII CHRISTMAS</span>
-      </header>
-      <main>
-        <section className="intro" aria-labelledby="title">
-          <h1 id="title" ref={titleRef} tabIndex={-1}>나만의 <span>크리스마스 트리 만들기</span></h1>
-          <p className="description">문구를 입력하면 글자들이 모여 크리스마스 트리가 돼요.</p>
+    <>
+      <StringLights />
+      <div className="shell">
+        <header className="brand">
+          <span className="brand-mark" aria-hidden="true" />
+          <span>ASCII CHRISTMAS</span>
+        </header>
+        <main>
+          <section className="intro" aria-labelledby="title">
+            <h1 id="title" ref={titleRef} tabIndex={-1}>나만의 <span>크리스마스 트리</span> 만들기</h1>
+            <p className="description">문구를 입력하면 글자들이 모여 크리스마스 트리가 돼요.</p>
+          </section>
+          {giftView && <p className="caption">“{tree.message}”</p>}
+
+          <section
+            ref={stageRef}
+            className="stage"
+            aria-label={giftView ? "선물로 받은 크리스마스 트리" : "문구가 크리스마스 트리로 바뀌는 미리보기"}
+          >
+            <canvas ref={canvasRef} role="img" aria-label={canvasLabel}>{canvasLabel}</canvas>
+            <button
+              className="play"
+              type="button"
+              aria-pressed={paused}
+              aria-label={playLabel}
+              title={playLabel}
+              onClick={() => setPaused(value => !value)}
+            >
+              <span className="play-icon" aria-hidden="true" />
+            </button>
+          </section>
+
+          <button className="lights-toggle" type="button" role="switch" aria-checked={lightsOn} onClick={() => setLightsOn(on => !on)}>
+            <SantaHat />
+            <span>크리스마스 조명 {lightsOn ? "끄기" : "켜기"}</span>
+            <span className="switch" aria-hidden="true" />
+          </button>
+
           <form className="entry" noValidate onSubmit={submit}>
             <label htmlFor="message">트리로 만들 문구</label>
             <div className="entry-row">
@@ -285,59 +332,10 @@ export default function App() {
               )}
             </div>
           </form>
-        </section>
-
-        <section
-          ref={terminalRef}
-          className="terminal"
-          aria-label={giftView ? "선물로 받은 크리스마스 트리" : "문구가 크리스마스 트리로 바뀌는 미리보기"}
-        >
-          <div className="terminal-bar">
-            <div className="window-markers" aria-hidden="true"><span /><span /><span /></div>
-            <span>christmas_tree.py</span>
-            <button
-              className="play"
-              type="button"
-              aria-pressed={paused}
-              aria-label={playLabel}
-              title={playLabel}
-              onClick={() => setPaused(value => !value)}
-            >
-              <span className="play-icon" aria-hidden="true" />
-            </button>
-          </div>
-          <div className="stage">
-            <canvas ref={canvasRef} role="img" aria-label={canvasLabel}>{canvasLabel}</canvas>
-            <div className="stage-meta" aria-hidden="true">
-              <span>OUTPUT</span>
-              <span className="state" data-grown={status === "RENDER OK"}>{status}</span>
-            </div>
-          </div>
-          <div className="timeline" aria-hidden="true"><span ref={progressRef} /></div>
-          <div className="editor">
-            <pre ref={codeRef} aria-label="트리 변환을 보여주는 파이썬 코드"><code>
-              {Array.from({ length: CODE_ROWS }, (_, offset) => {
-                const lineIndex = editor.first + offset;
-                const active = lineIndex === editor.index;
-                const line = timeline[lineIndex];
-                const length = active ? editor.typed : lineIndex < editor.index ? line.letters.length : 0;
-                return (
-                  <span key={offset} className="code-row" data-active={active}>
-                    <span className="line-number" aria-hidden="true">{lineIndex <= editor.index ? lineIndex + 1 : ""}</span>
-                    <span className="line-content" data-cursor={active && editor.cursor}>
-                      {tokenize(line, length).map((token, index) =>
-                        token.kind ? <span key={index} className={token.kind}>{token.text}</span> : token.text
-                      )}
-                    </span>
-                  </span>
-                );
-              })}
-            </code></pre>
-          </div>
-        </section>
-        {giftView && <button className="submit gift-action" type="button" onClick={makeOwn}>나도 만들기</button>}
-        <div className="sr-only" role="status">{announcement}</div>
-      </main>
-    </div>
+          {giftView && <button className="gift-action" type="button" onClick={makeOwn}>나도 만들기</button>}
+          <div className="sr-only" role="status">{announcement}</div>
+        </main>
+      </div>
+    </>
   );
 }
