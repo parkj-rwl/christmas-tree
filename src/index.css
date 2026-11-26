@@ -106,15 +106,6 @@ h1 {
 }
 h1 span { color: var(--gold); }
 .description { margin: 10px 0 0; color: var(--dim); line-height: 1.6; word-break: keep-all; }
-.caption {
-  margin: 22px 0 0;
-  text-align: center;
-  font-size: clamp(1.4rem, 5vw, 2rem);
-  font-weight: 800;
-  letter-spacing: -.03em;
-  word-break: keep-all;
-  overflow-wrap: anywhere;
-}
 
 /* The canvas is transparent with empty bands above the star and below the trunk; tuck them under neighbours. */
 .stage { position: relative; margin: -2% 0 -9%; }

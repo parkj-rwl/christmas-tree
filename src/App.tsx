@@ -51,7 +51,7 @@ export default function App() {
   const stageRef = useRef<HTMLElement>(null);
   const shareLinkRef = useRef<HTMLInputElement>(null);
   const elapsed = useRef(0);
-  const lit = useRef(0);
+  const lit = useRef(1);
   const composing = useRef(false);
   // Bumped whenever the shown tree changes; a running GIF export stops when it sees a new value.
   const generation = useRef(0);
@@ -60,7 +60,7 @@ export default function App() {
   const [giftTree, setGiftTree] = useState(() => readLinkedTree(location.href));
   const [createdTree, setCreatedTree] = useState<Tree | null>(null);
   const [paused, setPaused] = useState(reducedMotion.matches);
-  const [lightsOn, setLightsOn] = useState(false);
+  const [lightsOn, setLightsOn] = useState(true);
   const [count, setCount] = useState(0);
   const [error, setError] = useState("");
   const [announcement, setAnnouncement] = useState("");
@@ -150,8 +150,7 @@ export default function App() {
   }
 
   // Switches between the builder and the gift (receiver) view. Coming back from a link resets the builder;
-  // coming back from "받는 화면 미리 보기" restores where playback was. A received tree starts with the lights off
-  // so the receiver gets to switch them on.
+  // coming back from "받는 화면 미리 보기" restores where playback was.
   function openView(received: Tree | null) {
     const returningHome = giftView && !received;
     const previous = returningHome ? previewPlayback.current : null;
@@ -166,7 +165,6 @@ export default function App() {
           setAnnouncement("");
         }
       }
-      if (received) setLightsOn(false);
       generation.current += 1;
       elapsed.current = previous?.elapsed ?? 0;
       setGiftTree(received);
@@ -267,7 +265,6 @@ export default function App() {
             <h1 id="title" ref={titleRef} tabIndex={-1}>나만의 <span>크리스마스 트리</span> 만들기</h1>
             <p className="description">문구를 입력하면 글자들이 모여 크리스마스 트리가 돼요.</p>
           </section>
-          {giftView && <p className="caption">“{tree.message}”</p>}
 
           <section
             ref={stageRef}
